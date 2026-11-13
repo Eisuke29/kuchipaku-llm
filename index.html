@@ -197,6 +197,15 @@
       <label for="gfallback">上限に当たったときの予備モデル</label>
       <input id="gfallback" type="text" value="gemini-2.5-flash-lite">
     </div>
+    <div class="field">
+      <label for="rpmMain">メインのモデルを1分に何回まで使うか（無料枠の上限より少し低く）</label>
+      <input id="rpmMain" type="number" value="4" min="1" step="1">
+    </div>
+    <div class="field">
+      <label for="rpmFallback">予備モデルを1分に何回まで使うか</label>
+      <input id="rpmFallback" type="number" value="8" min="1" step="1">
+    </div>
+    <p class="note" style="margin-top:-4px">上限はGoogle AI Studioの「使用量とレート制限」で確認できます。メインを使い切ると予備モデルに切り替え、両方使い切ると空くまで待ちます。</p>
     <label class="check"><input type="checkbox" id="think"> じっくり考えさせる（精度は上がるが遅くなる）</label>
     <p class="warn">無料枠に送った内容はGoogleの製品改善に使われます。実験では有料枠かローカルLLMを使ってください。</p>
   </div>
@@ -257,7 +266,7 @@ function setStatus(s, busy = false) {
 const openDrawer = on => { $('drawer').classList.toggle('on', on); $('scrim').classList.toggle('on', on); };
 $('openSettings').onclick = () => openDrawer(true);
 $('closeSettings').onclick = $('scrim').onclick = () => openDrawer(false);
-for (const id of ['gkey', 'gmodel', 'gfallback', 'endMs', 'minSeg', 'unitMs']) { const v = store.get(id, null); if (v != null) $(id).value = v; $(id).onchange = () => { store.set(id, $(id).value.trim()); updatePill(); }; }
+for (const id of ['gkey', 'gmodel', 'gfallback', 'endMs', 'minSeg', 'unitMs', 'rpmMain', 'rpmFallback']) { const v = store.get(id, null); if (v != null) $(id).value = v; $(id).onchange = () => { store.set(id, $(id).value.trim()); updatePill(); }; }
 for (const id of ['think', 'retry']) { const v = store.get(id, null); if (v != null) $(id).checked = v; $(id).onchange = () => store.set(id, $(id).checked); }
 $('partner').value = store.get('partner', '');
 $('partner').oninput = () => store.set('partner', $('partner').value);
@@ -295,13 +304,34 @@ async function geminiOnce(model, prompt, signal, withThinking) {
     body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gen }),
   });
 }
+// 1分あたりの呼び出し回数をモデルごとに数え、上限を超えないようにする（ページを開き直しても引き継ぐ）
+const calls = store.get('calls', {});
+function recent(model) { const now = Date.now(); calls[model] = (calls[model] || []).filter(t => now - t < 60000); return calls[model]; }
+function note(model) { recent(model).push(Date.now()); store.set('calls', calls); }
+function budget(model, limit) { return limit - recent(model).length; }
+function waitMs(model) { const r = recent(model); return r.length ? 60000 - (Date.now() - r[0]) + 200 : 0; }
+function geminiPlan() {
+  const plan = [[$('gmodel').value.trim() || 'gemini-2.5-flash', Number($('rpmMain').value) || 4]];
+  if ($('gfallback').value.trim()) plan.push([$('gfallback').value.trim(), Number($('rpmFallback').value) || 8]);
+  return plan;
+}
+const geminiHasBudget = () => geminiPlan().some(([m, lim]) => budget(m, lim) > 0);
 async function askGemini(prompt, signal) {
   if (!$('gkey').value.trim()) throw new Error('右上の設定からGemini APIキーを入れてください');
-  const models = [$('gmodel').value.trim() || 'gemini-2.5-flash', $('gfallback').value.trim()].filter(Boolean);
+  let plan = geminiPlan();
+  while (!plan.some(([m, lim]) => budget(m, lim) > 0)) {
+    const w = Math.min(...plan.map(([m]) => waitMs(m)));
+    setStatus(`無料枠の上限に近いので待っています（あと${Math.ceil(w / 1000)}秒）`, true);
+    await new Promise((ok, ng) => { const t = setTimeout(ok, Math.min(w, 1000)); signal.addEventListener('abort', () => { clearTimeout(t); ng(new DOMException('aborted', 'AbortError')); }, { once: true }); });
+    setStatus('候補を考えています', true);
+  }
+  const models = plan.filter(([m, lim]) => budget(m, lim) > 0).map(([m]) => m);
   let lastErr = '';
   for (const model of models) {
+    note(model);
     let res = await geminiOnce(model, prompt, signal, true);
-    if (res.status === 400) res = await geminiOnce(model, prompt, signal, false);
+    if (res.status === 400) { note(model); res = await geminiOnce(model, prompt, signal, false); }
+    if (res.status === 429) { for (let i = 0; i < 10; i++) note(model); }   // 上限に当たったモデルは1分休ませる
     if (res.ok) {
       const j = await res.json();
       usedModel = model; updatePill();
@@ -332,7 +362,7 @@ async function convert() {
     if (ctrl.signal.aborted) return;
     let ranked = KP.rank(snap, cands, unitMs());
     showCands(ranked, snap.length);
-    if ($('retry').checked && ranked.length && !ranked.some(c => c.dist === 0)) {
+    if ($('retry').checked && ranked.length && !ranked.some(c => c.dist === 0) && (backendSel.value !== 'gemini' || geminiHasBudget())) {
       setStatus('口形が合う候補がないので、推定し直しています', true);
       const more = KP.parseCandidates(await ask(KP.buildPrompt(snap, ...ctx, KP.feedbackFor(ranked))));
       if (ctrl.signal.aborted) return;
