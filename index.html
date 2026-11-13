@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>口パク母音入力デモ</title>
+<style>
+  :root { --bg:#f7f6f3; --card:#fff; --ink:#1d1d1b; --mute:#6b6a66; --line:#dedcd6; --acc:#2f6fdb; --ok:#1f8a4c; --warn:#b5651d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1b1b1a; --card:#252524; --ink:#ecebe7; --mute:#a3a29d; --line:#3a3936; --acc:#6c9cf0; --ok:#4cc184; --warn:#e0a060; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Hiragino Sans","Noto Sans JP",system-ui,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header .sub { color:var(--mute); font-size:13px; }
+  main { display:grid; grid-template-columns: minmax(280px, 380px) 1fr; gap:16px; padding:16px 20px; max-width:1200px; margin:0 auto; }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card h2 { font-size:13px; color:var(--mute); margin:0 0 10px; font-weight:600; }
+  #video { width:100%; border-radius:8px; background:#000; transform:scaleX(-1); display:none; }
+  #live { font-size:56px; text-align:center; font-weight:700; height:72px; line-height:72px; }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .1s; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px; }
+  button { font:inherit; font-size:14px; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button:disabled { opacity:.45; cursor:default; }
+  .calib button { min-width:52px; }
+  .calib .n { font-size:11px; color:var(--mute); display:block; }
+  #composed { font-size:26px; min-height:76px; line-height:1.5; padding:6px 2px; border-bottom:1px solid var(--line); word-break:break-all; }
+  #composed .cursor { display:inline-block; width:2px; height:1.1em; background:var(--acc); vertical-align:middle; animation:blink 1s step-end infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  #tokens { font-size:15px; color:var(--mute); min-height:28px; margin-top:10px; }
+  #tokens .t { display:inline-block; padding:2px 7px; margin:2px; border-radius:6px; background:var(--bg); border:1px solid var(--line); color:var(--ink); }
+  #cands { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap:8px; margin-top:12px; }
+  #cands button { text-align:left; font-size:19px; padding:12px; min-height:64px; }
+  #cands button .r { display:block; font-size:12px; color:var(--mute); margin-top:4px; }
+  #cands button.match { border-color:var(--ok); }
+  #cands button.match .r::after { content:" ・母音一致"; color:var(--ok); }
+  #status { font-size:13px; color:var(--mute); margin-top:8px; min-height:18px; }
+  textarea, input, select { font:inherit; font-size:14px; width:100%; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  label { font-size:12px; color:var(--mute); display:block; margin:10px 0 4px; }
+  .keys button { width:52px; height:48px; font-size:20px; }
+  .note { font-size:12px; color:var(--mute); line-height:1.6; }
+  details summary { cursor:pointer; font-size:13px; color:var(--mute); }
+  .hidden { display:none !important; }
+  #history { font-size:12px; color:var(--mute); margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>口パク母音入力デモ</h1>
+  <span class="sub">口を止めずに無声で話す → LLMが候補を出す → タップで確定、を繰り返して文を作る</span>
+</header>
+<main>
+  <section>
+    <div class="card" id="camCard">
+      <h2>カメラ</h2>
+      <video id="video" playsinline muted></video>
+      <div id="live">–</div>
+      <div class="bar"><div id="conf"></div></div>
+      <div class="row"><button id="startCam" class="primary">カメラを開始</button></div>
+      <div id="camMsg" class="note" style="margin-top:8px"></div>
+      <div id="calibBox" class="hidden">
+        <label>口形の登録（各ボタンを押して約1.5秒その口の形を保つ。3回ずつ程度）</label>
+        <div class="row calib" id="calib"></div>
+        <div class="row"><button id="clearCalib">登録を消去</button></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>キーで母音を入力（カメラなしで試す）</h2>
+      <div class="row keys" id="keys"></div>
+      <div class="note" style="margin-top:8px">キーボードの a i u e o n でも入力できます。Enterで変換、Backspaceで1つ戻します。同じ母音を続けて押すと長い区間になります。</div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>設定</h2>
+      <label for="partner">相手のメッセージ（返信の文脈として使う・任意）</label>
+      <textarea id="partner" rows="2" placeholder="例: 明日の飲み会来れる？"></textarea>
+      <label for="backend">候補を出すLLM</label>
+      <select id="backend"></select>
+      <div id="geminiBox">
+        <label for="gkey">Gemini APIキー（このブラウザにだけ保存）</label>
+        <input id="gkey" type="password" placeholder="AIza...">
+        <label for="gmodel">モデル名</label>
+        <input id="gmodel" value="gemini-2.5-flash">
+        <label for="gfallback">上限に当たったときの予備モデル</label>
+        <input id="gfallback" value="gemini-2.5-flash-lite">
+        <label><input type="checkbox" id="think" style="width:auto"> じっくり考えさせる（精度↑・遅くなる）</label>
+      </div>
+      <label><input type="checkbox" id="retry" style="width:auto" checked> 口形が合う候補がないとき1回だけ推定し直す</label>
+      <details style="margin-top:10px">
+        <summary>分節のパラメータ</summary>
+        <label for="endMs">唇を閉じてこの時間止まったら区切って変換（ms）</label>
+        <input id="endMs" type="number" value="700" step="50">
+        <label for="minSeg">これより短い口形は無視（ms）</label>
+        <input id="minSeg" type="number" value="80" step="10">
+        <label for="unitMs">1モーラの長さの目安（ms）。話す速さに合わせる</label>
+        <input id="unitMs" type="number" value="150" step="10">
+      </details>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>作っている文</h2>
+      <div id="composed"><span id="composedText"></span><span class="cursor"></span></div>
+      <div id="tokens"></div>
+      <div class="row">
+        <button id="convert" class="primary">変換</button>
+        <button id="clearTok">観測を消す</button>
+        <button id="undo">1つ戻す</button>
+        <button id="clearAll">全部消す</button>
+        <button id="copy">コピー</button>
+      </div>
+      <div id="status"></div>
+      <div id="cands"></div>
+      <div id="history"></div>
+    </div>
+    <div class="card note" style="margin-top:16px">
+      <b>仕組み:</b> 唇の形を「あ・い・う・え・お・閉」の6つに分類し、口を止めずに話しても形が変わった区間ごとに区切ります。区間の長さも付けてLLMに渡し、モーラ数の推定まで任せます。LLMが出した候補は、その読みから期待される口形の並びと観測を照合して並べ替え、一致したものに印を付けます。
+    </div>
+  </section>
+</main>
+
+<script src="core.js"></script>
+<script type="module">
+const $ = id => document.getElementById(id);
+const CLASSES = ['a', 'i', 'u', 'e', 'o', 'N'];
+const LABEL = { a: 'あ', i: 'い', u: 'う', e: 'え', o: 'お', N: '閉' };
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('kp_' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('kp_' + k, JSON.stringify(v)); } catch {} },
+};
+
+// ---------- 状態 ----------
+let tokens = [];            // 今の区間の観測 [{v, ms}]
+let committed = [];         // 確定した文節
+let pending = null;         // 進行中のLLM呼び出し
+let lastQueryKey = '';
+
+function render() {
+  $('composedText').textContent = committed.join('');
+  $('tokens').innerHTML = tokens.length ? tokens.map(t => `<span class="t">${LABEL[t.v]}${t.alt ? `<small>/${LABEL[t.alt]}</small>` : ''}<small> ${Math.round(t.ms)}</small></span>`).join('') : '<span>（口パクするか、母音キーを押す）</span>';
+}
+function setStatus(s) { $('status').textContent = s; }
+
+// ---------- LLM ----------
+let claudeSample = null;
+const backendSel = $('backend');
+function refreshBackends() {
+  const opts = [];
+  if (claudeSample) opts.push(['claude', 'Claude（このページ上・キー不要）']);
+  opts.push(['gemini', 'Gemini API']);
+  const cur = backendSel.value || store.get('backend', '');
+  backendSel.innerHTML = opts.map(([v, t]) => `<option value="${v}">${t}</option>`).join('');
+  backendSel.value = opts.some(o => o[0] === cur) ? cur : opts[0][0];
+  $('geminiBox').classList.toggle('hidden', backendSel.value !== 'gemini');
+}
+backendSel.onchange = () => { store.set('backend', backendSel.value); refreshBackends(); };
+$('gkey').value = store.get('gkey', '');
+$('gkey').onchange = () => store.set('gkey', $('gkey').value.trim());
+$('gmodel').value = store.get('gmodel', 'gemini-2.5-flash');
+$('gmodel').onchange = () => store.set('gmodel', $('gmodel').value.trim());
+for (const id of ['gfallback', 'endMs', 'minSeg', 'unitMs']) { const v = store.get(id, null); if (v != null) $(id).value = v; $(id).onchange = () => store.set(id, $(id).value); }
+for (const id of ['think', 'retry']) { const v = store.get(id, null); if (v != null) $(id).checked = v; $(id).onchange = () => store.set(id, $(id).checked); }
+const unitMs = () => Number($('unitMs').value) || 150;
+refreshBackends();
+(async () => {
+  try {
+    if (window.claude && typeof window.claude.use === 'function') {
+      claudeSample = await window.claude.use('sample');
+      refreshBackends();
+    }
+  } catch {}
+})();
+
+async function geminiOnce(model, prompt, signal, withThinking) {
+  const key = $('gkey').value.trim();
+  const gen = { responseMimeType: 'application/json', temperature: 0.4 };
+  if (withThinking) gen.thinkingConfig = { thinkingBudget: $('think').checked ? -1 : 0 };
+  return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gen }),
+  });
+}
+async function askGemini(prompt, signal) {
+  if (!$('gkey').value.trim()) throw new Error('Gemini APIキーを設定してください');
+  const models = [$('gmodel').value.trim() || 'gemini-2.5-flash', $('gfallback').value.trim()].filter(Boolean);
+  let lastErr = '';
+  for (const model of models) {
+    let res = await geminiOnce(model, prompt, signal, true);
+    if (res.status === 400) res = await geminiOnce(model, prompt, signal, false);   // 思考設定に未対応のモデル
+    if (res.ok) {
+      const j = await res.json();
+      usedModel = model;
+      return (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    }
+    lastErr = `Gemini ${res.status}: ${(await res.text()).slice(0, 160)}`;
+    if (res.status !== 429 && res.status !== 503) break;   // 上限・混雑のときだけ予備モデルへ
+  }
+  throw new Error(lastErr);
+}
+let usedModel = '';
+async function askClaude(prompt, signal) {
+  const r = await claudeSample(prompt, { modelTier: 'quick', signal, cache: false });
+  return r.text;
+}
+
+async function convert() {
+  if (!tokens.length) return;
+  const key = JSON.stringify(tokens) + '|' + committed.join('');
+  if (key === lastQueryKey && $('cands').children.length) return;
+  lastQueryKey = key;
+  if (pending) pending.abort();
+  const ctrl = new AbortController(); pending = ctrl;
+  const snap = tokens.slice();
+  const ask = p => backendSel.value === 'claude' ? askClaude(p, ctrl.signal) : askGemini(p, ctrl.signal);
+  const ctx = [committed.join(''), $('partner').value.trim()];
+  setStatus('候補を考えています…');
+  const t0 = performance.now();
+  try {
+    let cands = KP.parseCandidates(await ask(KP.buildPrompt(snap, ...ctx)));
+    if (ctrl.signal.aborted) return;
+    let ranked = KP.rank(snap, cands, unitMs());
+    showCands(ranked, snap.length);
+    const ms = () => `${Math.round(performance.now() - t0)}ms${usedModel && backendSel.value === 'gemini' ? '・' + usedModel : ''}`;
+    if ($('retry').checked && ranked.length && !ranked.some(c => c.dist === 0)) {
+      setStatus(`口形が合う候補がないので推定し直しています…（${ms()}）`);
+      const more = KP.parseCandidates(await ask(KP.buildPrompt(snap, ...ctx, KP.feedbackFor(ranked))));
+      if (ctrl.signal.aborted) return;
+      ranked = KP.rank(snap, [...more, ...cands], unitMs());
+      showCands(ranked, snap.length);
+    }
+    setStatus(ranked.length ? `${ranked.length}件（${ms()}）。タップで確定` : '候補を読み取れませんでした。もう一度「変換」を押してください');
+  } catch (e) {
+    if (ctrl.signal.aborted) return;
+    if (e && e.code === 'not_granted') setStatus('Claudeの利用が許可されていません');
+    else if (e && e.code === 'rate_limited') setStatus('呼び出しが多すぎます。少し待ってください');
+    else setStatus('エラー: ' + (e.message || e));
+  } finally { if (pending === ctrl) pending = null; }
+}
+
+function showCands(list, used) {
+  const box = $('cands');
+  box.innerHTML = '';
+  list.forEach(c => {
+    const b = document.createElement('button');
+    if (c.dist === 0) b.className = 'match';
+    b.title = `口形: ${KP.visemeString(c.reading || '')}`;
+    b.innerHTML = `<span></span><span class="r"></span>`;
+    b.firstChild.textContent = c.text;
+    b.lastChild.textContent = c.reading || '';
+    b.onclick = () => pick(c, used);
+    box.appendChild(b);
+  });
+}
+function pick(c, used) {
+  committed.push(c.text);
+  const h = document.createElement('div');
+  h.textContent = `${KP.tokensToText(tokens.slice(0, used))} → ${c.text}`;
+  $('history').prepend(h);
+  tokens = tokens.slice(used); lastQueryKey = '';
+  $('cands').innerHTML = '';
+  setStatus('');
+  render();
+  if (tokens.some(t => t.v !== 'N')) convert();
+}
+
+$('convert').onclick = convert;
+$('clearTok').onclick = () => { tokens = []; $('cands').innerHTML = ''; render(); };
+$('undo').onclick = () => { if (tokens.length) tokens.pop(); else committed.pop(); $('cands').innerHTML = ''; lastQueryKey = ''; render(); };
+$('clearAll').onclick = () => { tokens = []; committed = []; $('cands').innerHTML = ''; $('history').innerHTML = ''; render(); };
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText(committed.join('')); setStatus('コピーしました'); } catch { setStatus('コピーできませんでした'); } };
+
+// ---------- キー入力 ----------
+function pushToken(v, ms) {
+  const last = tokens[tokens.length - 1];
+  if (last && last.v === v) last.ms += ms; else tokens.push({ v, ms });
+  lastQueryKey = '';
+  render();
+}
+CLASSES.forEach(v => {
+  const b = document.createElement('button');
+  b.textContent = LABEL[v];
+  b.onclick = () => pushToken(v, 150);
+  $('keys').appendChild(b);
+});
+document.addEventListener('keydown', e => {
+  if (e.target.matches('textarea, input, select')) return;
+  const k = e.key.toLowerCase();
+  const map = { a: 'a', i: 'i', u: 'u', e: 'e', o: 'o', n: 'N' };
+  if (map[k]) { pushToken(map[k], 150); e.preventDefault(); }
+  else if (e.key === 'Enter') { convert(); e.preventDefault(); }
+  else if (e.key === 'Backspace') { $('undo').click(); e.preventDefault(); }
+  else if (/^[1-8]$/.test(e.key)) { const b = $('cands').children[Number(e.key) - 1]; if (b) b.click(); }
+});
+
+// ---------- カメラと口形認識 ----------
+const BS = ['jawOpen', 'mouthClose', 'mouthFunnel', 'mouthPucker', 'mouthStretchLeft', 'mouthStretchRight', 'mouthSmileLeft', 'mouthSmileRight',
+  'mouthLowerDownLeft', 'mouthLowerDownRight', 'mouthUpperUpLeft', 'mouthUpperUpRight', 'mouthRollLower', 'mouthRollUpper', 'mouthPressLeft', 'mouthPressRight'];
+let samples = store.get('samples', []);   // [{c, f:[...]}]
+let landmarker = null, video = $('video'), collecting = null;
+
+function features(res) {
+  const lm = res.faceLandmarks?.[0];
+  const bs = res.faceBlendshapes?.[0]?.categories;
+  if (!lm || !bs) return null;
+  const d = (p, q) => Math.hypot(lm[p].x - lm[q].x, lm[p].y - lm[q].y);
+  const face = d(234, 454) || 1;
+  const byName = {};
+  for (const c of bs) byName[c.categoryName] = c.score;
+  return [...BS.map(n => byName[n] || 0), d(13, 14) / face * 3, d(61, 291) / face * 2];
+}
+function classify(f) {
+  if (samples.length < 6) return null;
+  const ds = samples.map(s => ({ c: s.c, d: s.f.reduce((a, x, i) => a + (x - f[i]) ** 2, 0) })).sort((a, b) => a.d - b.d).slice(0, 7);
+  const votes = {};
+  ds.forEach(x => votes[x.c] = (votes[x.c] || 0) + 1 / (1e-4 + x.d));
+  const total = Object.values(votes).reduce((a, b) => a + b, 0);
+  const probs = {}; CLASSES.forEach(c => probs[c] = (votes[c] || 0) / total);
+  const best = Object.entries(probs).sort((a, b) => b[1] - a[1])[0];
+  return { c: best[0], p: best[1], probs };
+}
+
+function renderCalib() {
+  const box = $('calib'); box.innerHTML = '';
+  CLASSES.forEach(c => {
+    const b = document.createElement('button');
+    const n = samples.filter(s => s.c === c).length;
+    b.innerHTML = `${LABEL[c]}<span class="n">${n}</span>`;
+    b.onclick = () => startCollect(c, b);
+    box.appendChild(b);
+  });
+}
+function startCollect(c, btn) {
+  if (!landmarker) return;
+  collecting = { c, until: performance.now() + 1800, skipUntil: performance.now() + 300 };
+  btn.disabled = true;
+  setTimeout(() => { collecting = null; store.set('samples', samples.slice(-1200)); renderCalib(); }, 1850);
+}
+$('clearCalib').onclick = () => { samples = []; store.set('samples', []); renderCalib(); };
+
+// 連続分節: フレームごとの判定を平滑化し、口形が変わった区間ごとにトークン化
+let hist = [], runLabel = null, runStart = 0, closedSince = null, lastFrame = 0, runProbs = {}, runFrames = 0;
+function runAlt(label) {
+  if (!runFrames) return undefined;
+  const alt = Object.entries(runProbs).filter(([c]) => c !== label).sort((a, b) => b[1] - a[1])[0];
+  return alt && alt[1] / runFrames >= 0.25 ? alt[0] : undefined;
+}
+function onFrameLabel(label, now, probs) {
+  hist.push(label); if (hist.length > 5) hist.shift();
+  const cnt = {}; hist.forEach(l => cnt[l] = (cnt[l] || 0) + 1);
+  const smooth = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0];
+  if (smooth !== runLabel) {
+    if (runLabel !== null) {
+      const ms = now - runStart;
+      if (ms >= Number($('minSeg').value || 80)) {
+        if (!(runLabel === 'N' && !tokens.length)) pushTokenLive(runLabel, ms, runLabel === 'N' ? undefined : runAlt(runLabel));
+      }
+    }
+    runLabel = smooth; runStart = now; runProbs = {}; runFrames = 0;
+  }
+  for (const c in probs) runProbs[c] = (runProbs[c] || 0) + probs[c];
+  runFrames++;
+  if (smooth === 'N') {
+    closedSince = closedSince ?? now;
+    if (tokens.some(t => t.v !== 'N') && now - closedSince > Number($('endMs').value || 700)) {
+      while (tokens.length && tokens[tokens.length - 1].v === 'N') tokens.pop();
+      closedSince = Infinity; render(); convert();
+    }
+  } else closedSince = null;
+}
+function pushTokenLive(v, ms, alt) {
+  const last = tokens[tokens.length - 1];
+  if (last && last.v === v) { last.ms += ms; last.alt = last.alt || alt; } else tokens.push({ v, ms, alt });
+  lastQueryKey = '';
+  render();
+}
+
+function loop() {
+  if (!landmarker || video.readyState < 2) { requestAnimationFrame(loop); return; }
+  const now = performance.now();
+  if (now - lastFrame >= 30) {
+    lastFrame = now;
+    const res = landmarker.detectForVideo(video, now);
+    const f = features(res);
+    if (f) {
+      if (collecting && now > collecting.skipUntil && now < collecting.until) samples.push({ c: collecting.c, f });
+      const r = classify(f);
+      if (r) {
+        $('live').textContent = LABEL[r.c];
+        $('conf').style.width = Math.round(r.p * 100) + '%';
+        if (!collecting) onFrameLabel(r.c, now, r.probs);
+      } else { $('live').textContent = '登録してください'; $('live').style.fontSize = '18px'; }
+      if (r) $('live').style.fontSize = '';
+    } else { $('live').textContent = '顔が見えません'; $('live').style.fontSize = '18px'; }
+  }
+  requestAnimationFrame(loop);
+}
+
+$('startCam').onclick = async () => {
+  $('startCam').disabled = true;
+  $('camMsg').textContent = 'カメラとモデルを準備しています…';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+    video.srcObject = stream; await video.play();
+    video.style.display = 'block';
+    const v = '0.10.14';
+    const { FaceLandmarker, FilesetResolver } = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}`);
+    const fs = await FilesetResolver.forVisionTasks(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${v}/wasm`);
+    landmarker = await FaceLandmarker.createFromOptions(fs, {
+      baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
+      runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true,
+    });
+    $('camMsg').textContent = samples.length ? '登録済みの口形で認識します。必要なら追加で登録してください。' : 'まず下のボタンで6つの口形を登録してください。';
+    $('calibBox').classList.remove('hidden');
+    renderCalib();
+    requestAnimationFrame(loop);
+  } catch (e) {
+    $('startCam').disabled = false;
+    $('camMsg').textContent = 'カメラを使えません（claude.ai上のページではカメラが使えません。GitHub Pages版か手元のファイルで開いてください）。下のキー入力で試せます。詳細: ' + (e.message || e);
+  }
+};
+
+render();
+</script>
+</body>
+</html>
