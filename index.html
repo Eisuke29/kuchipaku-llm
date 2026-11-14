@@ -228,7 +228,6 @@
   <div class="links">
     <button id="startTest">精度テスト（10問）<span>TEST</span></button>
     <button id="recalib">口形を登録し直す<span>CALIBRATE</span></button>
-    <button id="clearLearn">前に使った文の記憶を消す<span>FORGET</span></button>
     <button id="exportLog">記録を書き出す<span>EXPORT</span></button>
   </div>
   <div class="note" id="testSummary"></div>
@@ -238,8 +237,11 @@
 
 <script type="text/plain" id="lexWorker">
 // ステージ3: 母音の並びから言葉・文を推定する（ローカル）
-// 辞書は IPADIC（kuromoji.js 用に配布されているもの）。語のコストと品詞のつながりコストを使い、
-// かな漢字変換と同じ「ラティス＋最小コスト経路」で、母音だけを手がかりに変換する。
+// 考え方（タッチキーボードの文単位デコーダ VelociTap などと同じ「雑音のある通信路」モデル）:
+//   観測された母音列は、本当に言いたかった文の母音列に「読み違い（置換）」「余計な母音（挿入）」
+//   「抜けた母音（脱落）」が加わったもの、とみなす。
+//   候補 = 辞書の語をつないだ文のうち、「語の出やすさ × 語のつながり × 観測とのずれの小ささ」が最大のもの。
+//   最初の数文字を正しいと決めつけず、入力全体とのずれで評価する。
 const VROWS = { a: 'アカサタナハマヤラワガザダバパァャヮ', i: 'イキシチニヒミリギジヂビピィヰ', u: 'ウクスツヌフムユルグズヅブプゥュヴ', e: 'エケセテネヘメレゲゼデベペェヱ', o: 'オコソトノホモヨロヲゴゾドボポォョ' };
 const KV = {}; for (const v in VROWS) for (const k of VROWS[v]) KV[k] = v;
 const SMALL = 'ャュョァィゥェォヮ';
@@ -266,14 +268,26 @@ function rle(key) {
   return [k, counts];
 }
 
-const PER_KEY = 80;        // 同じキーに対して残す語数
-const MAX_SPAN = 8;        // 1語がまたぐ「母音のまとまり」の最大数
-const PER_SPAN = 25;
-const TAIL_COST = 3000;    // 変換できずに残した母音1つあたりのコスト
-const LAMBDA = 3000;       // 長さの手がかりの重み
-const EXPLICIT = 4000;     // 明示的に打ち分けた回数（閉口・押し直し）と合わない場合
-const SUB_SCALE = 1500;
-const FREQ_SCALE = 700;     // 頻度 → コスト（IPADIC のつながりコストと同じ尺度にそろえる）    // 母音の読み違いを仮定するコスト
+// ---- 調整できる重み（コストは大きいほど起こりにくい。語の出やすさと同じ尺度） ----
+const P = {
+  FREQ_SCALE: 700,   // 頻度 → コスト
+  PER_KEY: 150,      // 同じ母音キーの語を何語まで持つか
+  MAX_KEY: 9,        // 1語の母音（まとめた後）の最大数
+  PER_SPAN: 30,      // 同じ区間に置く語の数（観測と完全に一致する語）
+  PER_SPAN_FUZZY: 12, // 同じ区間に置く語の数（ずれを許して一致する語）。完全一致の語を押し出さないよう別枠
+  TAIL: 3200,        // どの語でも説明しない母音1つあたり
+  LAMBDA: 2500,      // 長さの手がかり（長めに保った母音）の重み
+  EXPLICIT: 3500,    // 明示的に打ち分けた回数と合わないとき
+  SUB_NEAR: 1100,    // 口の形が近い母音の読み違い（う↔お, い↔え）
+  SUB_MID: 1500,     // やや近い（あ↔え, あ↔お）
+  SUB_FAR: 2300,     // 遠い
+  INS: 1700,         // 余計な母音が入った
+  DEL: 1900,         // 母音が抜けた
+  SHARE: 400,        // 語の境目で同じ母音がひとまとまりに見えた
+  WIP: 7000,         // 語を1つ増やすごとの罰則（短い頻出語を細切れにつなぐ解釈を抑える）
+};
+const NEAR = new Set(['uo', 'ou', 'ie', 'ei']), MID = new Set(['ae', 'ea', 'ao', 'oa']);
+const subBase = (a, b) => a === b ? 0 : NEAR.has(a + b) ? P.SUB_NEAR : MID.has(a + b) ? P.SUB_MID : P.SUB_FAR;
 
 function buildLexicon(tid, pos, cc, freq, onProgress) {
   const tv = new DataView(tid), pb = new Uint8Array(pos), dec = new TextDecoder();
@@ -288,115 +302,175 @@ function buildLexicon(tid, pos, cc, freq, onProgress) {
     const surface = f[0], pron = f[f.length - 1], pos1 = f[1], pos2 = f[2];
     if (pos1 === '記号' || pron === '*' || !surface) continue;
     const key = vowelKey(pron);
-    if (!key || key.length > 12) continue;
+    if (!key || key.length > 14) continue;
     const [k, counts] = rle(key);
-    if (k.length > MAX_SPAN) continue;
-    // 語の出やすさは、話し言葉・Web を含む頻度表（wordfreq）を優先。載っていない語は使わない
+    if (k.length > P.MAX_KEY) continue;
     let adj;
-    if (freq) { const fq = freq.get(surface); if (!fq) continue; adj = -Math.log(fq) * FREQ_SCALE + (pos2 === '固有名詞' ? 1500 : 0); }
+    if (freq) { const fq = freq.get(surface); if (!fq) continue; adj = -Math.log(fq) * P.FREQ_SCALE + (pos2 === '固有名詞' ? 1500 : 0); }
     else adj = cost + (pos2 === '固有名詞' ? 2500 : 0);
     let arr = index.get(k); if (!arr) index.set(k, arr = []);
-    arr.push({ s: surface, l: lid, r: rid, c: adj, n: counts });
+    arr.push({ s: surface, p: pron, l: lid, r: rid, c: adj, n: counts });
     if (onProgress && t % 50000 === 0) onProgress(t / n);
   }
+  const keys = [];
   for (const [k, arr] of index) {
     arr.sort((a, b) => a.c - b.c);
     const seen = new Set(), out = [];
-    for (const e of arr) { const id = e.s + '|' + e.l + '|' + e.n.join(''); if (seen.has(id)) continue; seen.add(id); out.push(e); if (out.length >= PER_KEY) break; }
-    index.set(k, out);
+    for (const e of arr) { const id = e.s + '|' + e.l + '|' + e.n.join(''); if (seen.has(id)) continue; seen.add(id); out.push(e); if (out.length >= P.PER_KEY) break; }
+    keys.push({ k, ws: out, best: out[0].c });
   }
   const ccv = new Int16Array(cc);
-  return { index, cc: ccv, bdim: ccv[1] };
+  return { keys, cc: ccv, bdim: ccv[1] };
 }
 const conn = (lex, r, l) => lex.cc[r * lex.bdim + l + 2];
 
 // 観測: runs = [{ v, e: 明示的に打った回数, r: ふだんの長さに対する倍率, alt: 次点の母音, altCost }]
 function countPen(c, run) {
-  if (run.e >= 2) return EXPLICIT * Math.abs(c - run.e);
+  if (run.e >= 2) return P.EXPLICIT * Math.abs(c - run.e);
   const r = Math.min(3, Math.max(0.7, run.r || 1));
   const d = Math.log(c) - Math.log(r);
-  return LAMBDA * d * d;
+  return P.LAMBDA * d * d;
 }
+function subCost(kv, run) {
+  let c = subBase(kv, run.v);
+  if (c && run.alt === kv && run.altCost != null) c = Math.min(c, run.altCost);
+  return c;
+}
+
+// 語の母音キー k を観測 runs[i..] に合わせたときの、終わり位置ごとの最小のずれ（編集距離）と対応づけ
+function alignKey(k, runs, i, maxCost) {
+  const m = k.length, n = runs.length - i, W = Math.min(n, m + 2);
+  if (W <= 0) return [];
+  const INF = 1e9;
+  const D = Array.from({ length: m + 1 }, () => new Float64Array(W + 1).fill(INF));
+  const B = Array.from({ length: m + 1 }, () => new Uint8Array(W + 1));   // 1=対応 2=挿入(観測が余計) 3=脱落(語の母音が抜けた)
+  D[0][0] = 0;
+  for (let a = 1; a <= m; a++) { D[a][0] = D[a - 1][0] + P.DEL; B[a][0] = 3; }
+  for (let a = 1; a <= m; a++) {
+    let rowMin = D[a][0];
+    for (let b = 1; b <= W; b++) {
+      const run = runs[i + b - 1];
+      let best = D[a - 1][b - 1] + subCost(k[a - 1], run), op = 1;
+      if (D[a][b - 1] + P.INS < best) { best = D[a][b - 1] + P.INS; op = 2; }
+      if (D[a - 1][b] + P.DEL < best) { best = D[a - 1][b] + P.DEL; op = 3; }
+      D[a][b] = best; B[a][b] = op; if (best < rowMin) rowMin = best;
+    }
+    if (rowMin > maxCost) return [];
+  }
+  const out = [];
+  for (let b = 1; b <= W; b++) {
+    const c = D[m][b]; if (c > maxCost) continue;
+    // 対応づけを戻る（長さの手がかりを、対応した母音どうしで比べるため）
+    const pairs = []; let a = m, bb = b, firstExact = false;
+    while (a > 0 || bb > 0) {
+      const op = a > 0 && bb > 0 ? B[a][bb] : a > 0 ? 3 : 2;
+      if (op === 1) { pairs.push([a - 1, i + bb - 1]); if (a === 1 && bb === 1) firstExact = k[0] === runs[i].v; a--; bb--; }
+      else if (op === 2) bb--;
+      else a--;
+    }
+    out.push({ j: i + b, edit: c, pairs, firstExact });
+  }
+  return out;
+}
+
+// 語の長さに応じて許すずれの量（短い語ほど厳しく）
+const maxEdit = m => m <= 1 ? P.SUB_NEAR : m <= 2 ? P.SUB_FAR : m <= 4 ? P.SUB_FAR + P.INS : 2 * P.SUB_FAR + P.INS;
+
 function decode(lex, runs, ctxRid = 0, { nWords = 10, nSent = 3 } = {}) {
   const n = runs.length;
   if (!n) return { words: [], sentences: [] };
-  // 各開始位置から始まる語の候補
+  // 1) 各開始位置から始まる語の候補（ずれを許して照合）
   const nodes = Array.from({ length: n }, () => []);
   for (let i = 0; i < n; i++) {
-    for (let len = 1; len <= MAX_SPAN && i + len <= n; len++) {
-      const base = runs.slice(i, i + len).map(x => x.v).join('');
-      const keys = [[base, 0]];
-      for (let k = 0; k < len; k++) { const run = runs[i + k]; if (run.alt && run.e < 2) keys.push([base.slice(0, k) + run.alt + base.slice(k + 1), run.altCost]); }
-      const span = [];
-      for (const [key, subCost] of keys) {
-        if (/(.)\1/.test(key)) continue;   // 読み違いを仮定した結果、隣と同じ母音になるものは扱わない
-        const arr = lex.index.get(key); if (!arr) continue;
-        for (const w of arr) {
-          let pen = subCost;
-          for (let k = 0; k < len; k++) pen += countPen(w.n[k], runs[i + k]);
-          span.push({ w, i, j: i + len, own: w.c + pen, beta: Infinity, next: null, shared: false });
+    const bySpan = new Map();
+    for (const K of lex.keys) {
+      if (K.k.length > n - i + 2) continue;
+      const al = alignKey(K.k, runs, i, maxEdit(K.k.length));
+      for (const { j, edit, pairs, firstExact } of al) {
+        let list = bySpan.get(j); if (!list) bySpan.set(j, list = []);
+        for (const w of K.ws) {
+          let own = w.c + edit + P.WIP;
+          for (const [a, b] of pairs) own += countPen(w.n[a], runs[b]);
+          list.push({ w, i, j, own, edit, firstExact, beta: Infinity, next: null, shared: false });
         }
       }
-      span.sort((a, b) => a.own - b.own);
-      nodes[i].push(...span.slice(0, PER_SPAN));
+    }
+    for (const [, list] of bySpan) {
+      list.sort((a, b) => a.own - b.own);
+      nodes[i].push(...list.filter(x => x.edit === 0).slice(0, P.PER_SPAN), ...list.filter(x => x.edit > 0).slice(0, P.PER_SPAN_FUZZY));
     }
   }
-  // 後ろから: beta = その語から文末までの最小コスト
-  const best = (r, j, minLen) => {
+  // 2) 後ろから: beta = その語から文末までの最小コスト（入力の最後まで全体を見る）
+  const best = (r, j, needShare) => {
     let b = Infinity, arg = null;
     if (j >= n) return [0, null];
-    for (const m of nodes[j]) { if (m.j - m.i < minLen) continue; const c = conn(lex, r, m.w.l) + m.beta; if (c < b) { b = c; arg = m; } }
+    for (const m of nodes[j]) { if (needShare && !m.firstExact) continue; const c = conn(lex, r, m.w.l) + m.beta; if (c < b) { b = c; arg = m; } }
     return [b, arg];
   };
   for (let i = n - 1; i >= 0; i--) {
     for (const nd of nodes[i]) {
-      let b = (n - nd.j) * TAIL_COST + (nd.j < n ? 500 : 0), arg = null, shared = false;
-      const [c1, a1] = best(nd.w.r, nd.j, 1);
+      let b = (n - nd.j) * P.TAIL + (nd.j < n ? 500 : 0), arg = null, shared = false;
+      const [c1, a1] = best(nd.w.r, nd.j, false);
       if (c1 < b) { b = c1; arg = a1; }
-      // 語の境目で同じ母音が続き、ひとまとまりに見えた場合（例: 「すき」「いい」）
-      const sj = nd.j - 1, run = runs[sj];
-      if (sj > nd.i - 1 && sj < n) {
-        const [c2, a2] = best(nd.w.r, sj, 2);
-        const share = countPen(2, run) - countPen(1, run) + 300;
-        if (a2 && c2 + share < b) { b = c2 + share; arg = a2; shared = true; }
+      // 語の境目で同じ母音がひとまとまりに見えた場合（例: 「すき」「いい」→ u i）
+      const sj = nd.j - 1;
+      if (sj > nd.i && sj < n) {
+        const [c2, a2] = best(nd.w.r, sj, true);
+        if (a2 && c2 + P.SHARE < b) { b = c2 + P.SHARE; arg = a2; shared = true; }
       }
       nd.beta = nd.own + b; nd.next = arg; nd.shared = shared;
     }
   }
-  const first = nodes[0].map(nd => ({ nd, total: conn(lex, ctxRid, nd.w.l) + nd.beta })).sort((a, b) => a.total - b.total);
-  const kanaOf = (i, j) => runs.slice(i, j).map(x => V2K[x.v].repeat(Math.max(1, x.e))).join('');
-  // 言葉の候補: キーボードの予測と同じく、長く一致するものを先に。各長さで出やすい順に数個ずつ
+  // 文頭のつながり: 直前に確定した語があるときだけ使う（入力は文の途中から始まることもあるため）
+  const head = nd => (ctxRid ? conn(lex, ctxRid, nd.w.l) : 0) + nd.beta;
+  const first = nodes[0].map(nd => ({ nd, total: head(nd) })).sort((a, b) => a.total - b.total);
+  // 言葉の候補: 「この語から始めたとき、入力全体をどれだけうまく説明できるか」で並べる
   const words = [], seenW = new Set();
-  const maxLen = Math.max(0, ...nodes[0].map(nd => nd.j));
-  for (let len = maxLen; len >= 1 && words.length < nWords; len--) {
-    const group = nodes[0].filter(nd => nd.j === len).map(nd => ({ nd, c: conn(lex, ctxRid, nd.w.l) + nd.own })).sort((x, y) => x.c - y.c);
-    let k = 0;
-    for (const { nd, c } of group) {
-      if (seenW.has(nd.w.s)) continue; seenW.add(nd.w.s);
-      words.push({ text: nd.w.s, used: nd.j, lastCount: nd.w.n[nd.w.n.length - 1], rid: nd.w.r, total: c });
-      if (++k >= (len >= 3 ? 5 : 3) || words.length >= nWords) break;
-    }
+  for (const { nd, total } of first) {
+    if (seenW.has(nd.w.s)) continue; seenW.add(nd.w.s);
+    words.push({ text: nd.w.s, yomi: nd.w.p, used: nd.j, lastCount: nd.w.n[nd.w.n.length - 1], rid: nd.w.r, total, edit: nd.edit });
+    if (words.length >= nWords) break;
   }
+  const kanaOf = (i, j) => runs.slice(i, j).map(x => V2K[x.v].repeat(Math.max(1, x.e))).join('');
   const sentences = [], seenS = new Set();
   for (const { nd, total } of first) {
-    let text = '', cur = nd, end = 0, rid = 0;
-    while (cur) { text += cur.w.s; end = cur.j; rid = cur.w.r; cur = cur.next; }
+    let text = '', yomi = '', cur = nd, end = 0, rid = 0, edits = 0;
+    while (cur) { text += cur.w.s; yomi += cur.w.p; edits += cur.edit; end = cur.j; rid = cur.w.r; cur = cur.next; }
     const rest = kanaOf(end, n);
     if (seenS.has(text + rest)) continue; seenS.add(text + rest);
-    sentences.push({ text, rest, rid, total });
+    sentences.push({ text, yomi, rest, rid, total, edits });
     if (sentences.length >= nSent) break;
   }
   return { words, sentences };
 }
 
-// AIの答えの読みが、観測した母音の並びと大きく矛盾しないか
+
+// 候補文の読みと観測全体とのずれ（雑音のある通信路モデルの「観測の出やすさ」）。AIの候補の並べ替えに使う
+function channelCost(yomi, runs) {
+  const key = vowelKey(yomi); if (!key) return Infinity;
+  const [k, counts] = rle(key), m = k.length, n = runs.length;
+  if (!m || !n) return Infinity;
+  const D = Array.from({ length: m + 1 }, () => new Float64Array(n + 1).fill(Infinity));
+  D[0][0] = 0;
+  for (let a = 0; a <= m; a++) for (let b = 0; b <= n; b++) {
+    if (a === 0 && b === 0) continue;
+    let best = Infinity;
+    if (a > 0 && b > 0) best = D[a - 1][b - 1] + subCost(k[a - 1], runs[b - 1]) + (k[a - 1] === runs[b - 1].v ? countPen(counts[a - 1], runs[b - 1]) : 0);
+    if (b > 0) best = Math.min(best, D[a][b - 1] + P.INS);
+    if (a > 0) best = Math.min(best, D[a - 1][b] + P.DEL);
+    D[a][b] = best;
+  }
+  return D[m][n];
+}
+
+// AIの答えの読みが、観測した母音の並びと大きく矛盾しないか（ずれは全体の2割まで）
 function yomiFits(yomi, runs) {
   const key = vowelKey(yomi); if (!key) return false;
   const a = rle(key)[0], b = runs.map(x => x.v).join('');
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
   for (let j = 1; j <= b.length; j++) d[0][j] = j;
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-  return d[a.length][b.length] <= Math.floor(b.length / 5);
+  return d[a.length][b.length] <= Math.max(1, Math.floor(b.length / 5));
 }
 
 // ---- ここから下は Worker 用: 辞書の読み込みとメッセージ処理 ----
@@ -449,12 +523,12 @@ self.onmessage = async ev => {
       self.postMessage({ type: 'progress', text: '辞書を組み立て中' });
       const ab = u => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength);
       LEX = buildLexicon(ab(tid), ab(pos), ab(cc), freqMap(fq));
-      let n = 0; for (const a of LEX.index.values()) n += a.length;
+      let n = 0; for (const K of LEX.keys) n += K.ws.length;
       self.postMessage({ type: 'ready', words: n });
     } else if (m.type === 'decode') {
       self.postMessage({ type: 'decoded', id: m.id, result: LEX ? decode(LEX, m.runs, m.ctx, { nWords: 12 }) : null });
-    } else if (m.type === 'fits') {
-      self.postMessage({ type: 'fitted', id: m.id, ok: m.yomis.map(y => yomiFits(y, m.runs)) });
+    } else if (m.type === 'score') {
+      self.postMessage({ type: 'scored', id: m.id, costs: m.yomis.map(y => channelCost(y, m.runs)) });
     }
   } catch (e) { self.postMessage({ type: 'error', text: String(e.message || e) }); }
 };
@@ -771,7 +845,6 @@ function commit(v, via, info) {
 let committed = '', ctxRid = 0, consumedKey = '', tokens = [];
 let runMs = store.get('runMs', null);            // この人のふだんの1文字の長さ
 const history = [];
-let phrases = store.get('phrases', []);          // 送信した文と、そのときの母音の並び（次から最優先で出す）
 const median = xs => { const a = [...xs].sort((p, q) => p - q); return a[Math.floor(a.length / 2)]; };
 const pendKana = () => tokens.map(t => KANA[t.v]).join('');
 const collapse = k => k.replace(/(.)\1+/g, '$1');
@@ -796,7 +869,7 @@ function renderTyped() {
 
 // --- ローカル辞書（別スレッドで読み込み・変換） ---
 let worker = null, dictReady = false, decodeId = 0, local = { words: [], sentences: [] };
-const fitWaiters = new Map(); let fitId = 0;
+const scoreWaiters = new Map(); let scoreId = 0;
 function setDict(t) { $('dictNote').textContent = t; $('dictFoot').textContent = t; }
 function startWorker() {
   try { worker = new Worker(URL.createObjectURL(new Blob([$('lexWorker').textContent], { type: 'text/javascript' }))); }
@@ -806,7 +879,7 @@ function startWorker() {
     if (m.type === 'progress') setDict('辞書: ' + m.text);
     else if (m.type === 'ready') { dictReady = true; setDict(`辞書: 準備OK（${m.words.toLocaleString()}語）`); refresh(); }
     else if (m.type === 'decoded') { if (m.id === decodeId && m.result) { local = m.result; renderCands(); } }
-    else if (m.type === 'fitted') { fitWaiters.get(m.id)?.(m.ok); fitWaiters.delete(m.id); }
+    else if (m.type === 'scored') { scoreWaiters.get(m.id)?.(m.costs); scoreWaiters.delete(m.id); }
     else if (m.type === 'error') { if (!dictReady) setDict('辞書: 読み込めませんでした（' + m.text + '）'); }
   };
   const dev = location.hostname === 'localhost';
@@ -815,10 +888,10 @@ function startWorker() {
     dict: dev ? location.origin + '/dict/' : 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/',
     freq: dev ? location.origin + '/dict/small_ja.msgpack.gz' : 'https://cdn.jsdelivr.net/gh/rspeer/wordfreq@master/wordfreq/data/small_ja.msgpack.gz' });
 }
-const fits = (yomis, runs) => new Promise(ok => {
-  if (!worker) return ok(yomis.map(() => true));
-  const id = ++fitId; fitWaiters.set(id, ok); worker.postMessage({ type: 'fits', id, yomis, runs });
-  setTimeout(() => { if (fitWaiters.has(id)) { fitWaiters.delete(id); ok(yomis.map(() => true)); } }, 1500);
+const scoreYomi = (yomis, runs) => new Promise(ok => {
+  if (!worker || !dictReady) return ok(yomis.map(() => 0));
+  const id = ++scoreId; scoreWaiters.set(id, ok); worker.postMessage({ type: 'score', id, yomis, runs });
+  setTimeout(() => { if (scoreWaiters.has(id)) { scoreWaiters.delete(id); ok(yomis.map(() => 0)); } }, 2000);
 });
 
 function refresh() {
@@ -847,16 +920,12 @@ function renderCands() {
   const box = $('cands'); box.innerHTML = '';
   const runs = getRuns();
   if (!runs.length) { box.innerHTML = '<div class="empty">口パクすると、ここに言葉と文の候補が出ます。<br>出てきたらスペースを離して選ぶ。</div>'; return; }
-  const key = runs.map(r => r.v).join('');
   const sents = [];
-  if (!committed && key.length >= 2) {
-    const hit = phrases.filter(p => p.key.startsWith(key)).sort((a, b) => (a.key.length - key.length) - (b.key.length - key.length)).slice(0, 3);
-    for (const p of hit) sents.push(chip(p.text, 'sent', () => pickSentence(p.text, 'learned'), '前に使った'));
-  }
-  if (ai.sig === sig()) for (const it of ai.items) if (!sents.some(s => s.firstChild.textContent === it)) sents.push(chip(it, 'sent ai', () => pickSentence(it, 'ai'), 'AI'));
+  if (ai.sig === sig()) for (const it of ai.items) sents.push(chip(it.text, 'sent ai', () => pickSentence(it.text, 'ai'), it.tag));
   section(box, 'SENTENCE', '文', sents);
   if (ai.note) { const n = document.createElement('div'); n.className = 'empty small'; n.textContent = ai.note; box.appendChild(n); }
   section(box, 'WORDS', '次の言葉', local.words.map(w => chip(w.text, 'word', () => pickWord(w))));
+  if (!$('gkey').value.trim()) { const n = document.createElement('div'); n.className = 'empty small'; n.textContent = '文の推定にはAIが必要です（設定でGemini APIキーを入れる）。辞書だけでは文まで当てられません。'; box.appendChild(n); }
   if (!dictReady && !sents.length) { const n = document.createElement('div'); n.className = 'empty small'; n.textContent = $('dictNote').textContent; box.appendChild(n); }
 }
 function consume(nRuns, lastCount) {
@@ -886,9 +955,6 @@ function clearAll() { committed = ''; tokens = []; consumedKey = ''; ctxRid = 0;
 function send() {
   const text = committed + pendKana(); if (!text) return;
   const key = collapse(consumedKey + getRuns().map(r => r.v).join(''));
-  if (committed && !tokens.length && key.length >= 2) {
-    phrases = [{ text, key }, ...phrases.filter(p => p.text !== text)].slice(0, 200); store.set('phrases', phrases);
-  }
   history.push({ text, t: Date.now() }); log.sent.push({ t: Date.now(), text, key });
   clearAll(); renderHistory();
 }
@@ -923,20 +989,20 @@ async function queryAI() {
   if (wait > 0) { clearTimeout(aiTimer); aiTimer = setTimeout(queryAI, wait); return; }
   aiBusy = true; aiLast = Date.now(); const mySig = sig();
   ai = { sig: mySig, items: [], note: 'AI: 考え中…' }; renderCands();
-  const prompt = `声を出さずに口パクで日本語を話した人の、口の形（母音）だけの観測から、何と言ったかを推定してください。
-【観測のルール】
+  const prompt = `声を出さずに口パクで日本語を話した人の、口の形（母音）の観測から、何と言ったかを推定してください。
+【観測の性質（重要）】
 - 子音は見えません。「ん」「っ」も口の形に出ないので観測に含まれません。
-- 観測は、口の形が変わるごとに1つです。同じ母音が続く部分（例: いい、きょう=おお、せんせい=ええ）は1つにまとまって見えることがあります。どの母音も1〜3モーラ分である可能性があり、「長め」と書かれたものはその可能性が高いです。
-- 「はっきりN回」は、本人が同じ母音をN回に打ち分けたものです。
+- 観測は口の形が変わるごとに1つです。同じ母音が続く部分（いい、きょう=おお、せんせい=ええ）は1つにまとまります。どの母音も1〜3モーラ分のことがあり、「長め」はその可能性が高いです。
+- 観測には誤りがあります。母音の読み違い（特に う↔お、い↔え、あ↔え、あ↔お）、余計な母音の混入、母音の抜けが起こります。1〜2か所の誤りは普通にあると考えてください。
+- 最初の数個の観測を特別に信用せず、観測全体を見て、全体として最も近い発言を考えてください。
 【これまでの会話（本人の発言）】
 ${history.slice(-3).map(h => '・' + h.text).join('\n') || '（なし）'}
 【この発言で、すでに確定した部分】
 「${committed}」
-【その続きの観測（順番どおり）】
+【その続きの観測（順番どおり、${runs.length}個）】
 ${describeRuns(runs)}
-${local.words.length ? `【辞書による最初の言葉の候補（参考。正しいとは限らない）】\n${local.words.slice(0, 8).map(w => w.text).join('、')}` : ''}
 【出力】
-観測全体をちょうど使い切る、日常会話として自然な「続きの部分」を、確からしい順に最大5個。確定した部分は繰り返さないこと。
+この続きとして、日常会話として自然で、母音の並びが観測全体と近い発言を、確からしい順に8個。確定した部分は繰り返さないこと。
 JSONのみ: {"candidates":[{"text":"漢字かな交じりの表記","yomi":"ひらがなの読み"}]}`;
   try {
     const models = ($('gmodel').value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -947,7 +1013,7 @@ JSONのみ: {"candidates":[{"text":"漢字かな交じりの表記","yomi":"ひ�
         method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
         body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.3 } }),
       });
-      if (res.status !== 404 && res.status !== 400) break;
+      if (res.status !== 404 && res.status !== 400 && res.status !== 429) break;
     }
     if (!res) { ai.note = 'AI: モデル名が空です'; return; }
     if (res.status === 429) { aiPausedUntil = Date.now() + 60000; ai.note = 'AI: 無料枠の上限に当たったので1分休みます'; return; }
@@ -955,11 +1021,16 @@ JSONのみ: {"candidates":[{"text":"漢字かな交じりの表記","yomi":"ひ�
     const j = await res.json();
     const text = (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
     const list = (JSON.parse(text.replace(/^```(json)?|```$/g, '').trim()).candidates || []).filter(c => c && c.text && c.yomi);
-    const ok = await fits(list.map(c => c.yomi), runs);
-    log.ai.push({ t: Date.now(), model: used, runs, list, ok });
+    // AIの出した順（言葉としての自然さ）と、観測全体とのずれ（ローカルで計算）を合わせて並べ替える
+    const costs = await scoreYomi(list.map(c => String(c.yomi)), runs);
+    const limit = 2300 * (2 + runs.length * 0.25);
+    const scored = list.map((c, i) => ({ text: String(c.text), yomi: String(c.yomi), cost: costs[i], score: costs[i] + i * 700 }))
+      .filter(c => c.cost <= limit).sort((a, b) => a.score - b.score);
+    log.ai.push({ t: Date.now(), model: used, runs, list, costs });
     if (sig() !== mySig) return;
-    const items = [...new Set(list.filter((c, i) => ok[i]).map(c => String(c.text)))].slice(0, 5);
-    ai = { sig: mySig, items, note: items.length ? '' : 'AI: 母音の並びに合う文が見つかりませんでした' };
+    const seen = new Set(), items = [];
+    for (const c of scored) { if (seen.has(c.text)) continue; seen.add(c.text); items.push({ text: c.text, tag: c.cost < 1 ? 'AI・一致' : 'AI' }); if (items.length >= 5) break; }
+    ai = { sig: mySig, items, note: items.length ? '' : 'AI: 観測に近い文が見つかりませんでした' };
   } catch (e) { ai.note = 'AI: ' + String(e.message || e).slice(0, 60); }
   finally { aiBusy = false; if (ai.sig === sig()) renderCands(); if (aiPending) { aiPending = false; queryAI(); } }
 }
@@ -1005,7 +1076,7 @@ function loop() {
 }
 
 idleHint(); renderTyped(); renderCands(); renderHistory(); startWorker();
-$('clearLearn').onclick = () => { phrases = []; store.set('phrases', []); drawer(false); renderCands(); };
+try { localStorage.removeItem('kp2_' + 'phrases'); } catch {}   // 以前の版が保存した文の記憶を消す
 // 自動テスト用の入口（カメラなしで判定結果を流し込む）
 window.__kpTest = { setModel: m => { model = m; }, step, setRec, get typed() { return committed + pendKana(); }, get runs() { return getRuns(); } };
 
