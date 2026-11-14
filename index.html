@@ -144,7 +144,7 @@
 
     <div class="cands">
       <div class="label">WORDS<small>言葉の候補</small></div>
-      <div class="list" id="cands"><span class="cand ph">話すと、ここに読みの候補が出ます</span></div>
+      <div class="list" id="cands"><span class="cand ph">長めに保った母音があると、ここに候補が出ます</span></div>
     </div>
 
     <div class="mouth-wrap" id="panel">
@@ -191,10 +191,7 @@
 <div class="scrim" id="scrim"></div>
 <aside class="drawer" id="settingsVeil">
   <div class="drawer-head"><div class="label">SETTINGS<small>設定</small></div><button class="x" id="closeSettings" aria-label="閉じる">×</button></div>
-  <div class="field"><label><input id="stage2" type="checkbox" checked style="width:auto;margin-right:8px">閉じずに続けた同じ母音（いい・ええ…）を長さから推定する</label><div class="note" id="moraNow" style="margin-top:4px"></div></div>
-  <div class="field"><label for="gkey">AIで並べ替え（任意）: Gemini APIキー</label><input id="gkey" type="password" autocomplete="off" placeholder="空欄ならAIなしで動きます"><div class="note" style="margin-top:4px">無料枠では送った内容がGoogleの改善に使われます。送るのは母音と長さだけです。</div></div>
-  <div class="field"><label for="gmodel">AIのモデル</label><input id="gmodel" type="text" value="gemini-2.5-flash-lite"></div>
-  <div class="note" id="aiNote"></div>
+  <div class="field"><label><input id="stage2" type="checkbox" checked style="width:auto;margin-right:8px">長めに保った母音があれば、重なりの候補（いい・ええ…）を出す</label><div class="note" id="moraNow" style="margin-top:4px"></div></div>
   <div class="field"><label for="segMs">【スペース押下中】同じ母音が何ミリ秒続いたら1文字にするか</label><input id="segMs" type="number" value="140" step="10" min="60"></div>
   <div class="field"><label><input id="handsFree" type="checkbox" style="width:auto;margin-right:8px">スペースなしでも入力する（キープ→閉口で確定）</label></div>
   <div class="field"><label for="holdMs">【スペースなし】何ミリ秒キープで準備完了にするか</label><input id="holdMs" type="number" value="180" step="20" min="60"></div>
@@ -223,7 +220,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('kp2_' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('kp2_' + k, JSON.stringify(v)); } catch {} },
 };
-for (const id of ['segMs', 'holdMs', 'closeMs', 'minConf', 'gkey', 'gmodel']) { const v = store.get(id, null); if (v != null) $(id).value = v; $(id).onchange = () => store.set(id, $(id).value); }
+for (const id of ['segMs', 'holdMs', 'closeMs', 'minConf']) { const v = store.get(id, null); if (v != null) $(id).value = v; $(id).onchange = () => store.set(id, $(id).value); }
 { const v = store.get('stage2', true); $('stage2').checked = v; $('stage2').onchange = () => store.set('stage2', $('stage2').checked); }
 { const v = store.get('handsFree', false); $('handsFree').checked = v; $('handsFree').onchange = () => { store.set('handsFree', $('handsFree').checked); resetState(); }; }
 const num = id => Number($(id).value);
@@ -438,7 +435,7 @@ let ema = null, cand = null, since = 0, armed = null, closedSince = null;
 // 押下中（スペース / ボタン）の状態
 let rec = false, seg = null;
 function idleHint() {
-  $('hint').textContent = $('handsFree').checked ? 'スペースを押しながら口パク（押さずにキープ→閉口でも可）' : 'スペースを押しながら口パク。いい・ええ は閉じずに長めでOK';
+  $('hint').textContent = $('handsFree').checked ? 'スペースを押しながら口パク（押さずにキープ→閉口でも可）' : 'スペースを押しながら口パク。同じ母音を続けるときは、一度閉じるか押し直す';
 }
 function resetState() { ema = null; cand = null; armed = null; closedSince = null; if (seg) { seg.run = null; seg.closed = true; } setRing(0, false); $('now').textContent = ''; if (!rec) idleHint(); }
 function setRec(on) {
@@ -452,10 +449,7 @@ function setRec(on) {
     $('hint').textContent = '入力中… 離すと終了';
   }
   else if (seg) {
-    if (useStage2() && seg.frames.length) {
-      const h = resolveHold(seg);
-      if (h) { seg = null; setRing(0, false); $('now').textContent = ''; idleHint(); return; }
-    }
+    if (useStage2() && seg.any) resolveHold(seg);
     // 押している間に1文字も確定しなかったら、その間で一番多かった母音を1文字だけ入れる（短く押す使い方）
     if (!seg.any && seg.n >= 3) {
       const best = VOWELS.reduce((a, b) => (seg.votes[a] || 0) >= (seg.votes[b] || 0) ? a : b);
@@ -517,86 +511,53 @@ function commit(v, via) {
   if (test) testAnswer(v);
 }
 
-// ---------- ステージ2: 押していた間の入力をまとめて解釈し直す ----------
-let hold = null;   // 直前の押下: { start, runs, cands, chosen, picked }
+// ---------- ステージ2: 長めに保った母音を「重なりかもしれない」候補として出す（自動では置き換えない） ----------
+let hold = null;   // 直前の押下: { start, cands, chosen }
 const useStage2 = () => $('stage2').checked && !test;
-let moraMs = store.get('moraMs', 260);
-function showMora() { $('moraNow').textContent = `いまの1モーラの長さ: 約${Math.round(moraMs)}ミリ秒（使うほど自分の速さに合わせます）`; }
+let runMs = store.get('runMs', null);   // この人のふだんの1文字の長さ
+function showMora() { $('moraNow').textContent = runMs ? `ふだんの1文字の長さ: 約${Math.round(runMs)}ミリ秒（使うほど合わせます）` : 'ふだんの1文字の長さ: 計測中'; }
+const median = xs => { const a = [...xs].sort((p, q) => p - q); return a[Math.floor(a.length / 2)]; };
 function resolveHold(sg) {
-  const d = decode(sg.frames, moraMs);
-  if (!d.cands.length) return null;
-  hold = { start: sg.start, runs: d.runs, cands: d.cands, chosen: 0, picked: false, ai: false, at: Date.now() };
-  applyChoice(0);
-  log.holds.push({ t: Date.now(), runs: d.runs.map(r => ({ v: r.v, ms: r.ms, valleys: r.valleys })), moraMs: d.moraMs, cands: d.cands.map(c => c.text) });
-  askAI(hold);
-  return hold;
+  const base = typed.slice(sg.start);
+  const runs = buildRuns(sg.frames);
+  if (!runs.length || !base) return;
+  // 基準: この押下の中の中央値（3区間以上あるとき）。なければ、これまでの自分の長さ
+  const ref = runs.length >= 3 ? median(runs.map(r => r.ms)) : runMs;
+  const ratio = runs.map(r => ref ? r.ms / ref : 1);
+  const long = ratio.map(x => x >= 1.7);
+  if (runs.length >= 2) {
+    const normal = runs.filter((r, k) => !long[k]).map(r => r.ms);
+    if (normal.length) { const m = median(normal); runMs = runMs ? runMs * 0.8 + m * 0.2 : m; store.set('runMs', Math.round(runMs)); showMora(); }
+  }
+  log.holds.push({ t: Date.now(), typed: base, runs: runs.map((r, k) => ({ v: r.v, ms: r.ms, valleys: r.valleys, ratio: +ratio[k].toFixed(2) })), ref: ref && Math.round(ref), chosen: base });
+  const text = ks => runs.map((r, k) => KANA[r.v].repeat(ks[k])).join('');
+  const alts = [];
+  const idx = long.map((l, k) => l ? k : -1).filter(k => k >= 0).sort((p, q) => ratio[q] - ratio[p]);
+  if (idx.length > 1) alts.push(text(runs.map((r, k) => long[k] ? 2 : 1)));
+  for (const k of idx.slice(0, 3)) { alts.push(text(runs.map((r, n) => n === k ? 2 : 1))); if (ratio[k] >= 2.6) alts.push(text(runs.map((r, n) => n === k ? 3 : 1))); }
+  const uniq = [...new Set(alts)].filter(t => t !== base).slice(0, 4);
+  if (!uniq.length) { hold = null; renderCands(); return; }
+  hold = { start: sg.start, cands: [base, ...uniq].map(t => ({ text: t })), chosen: 0 };
+  renderCands();
 }
 function applyChoice(i) {
   hold.chosen = i;
   typed = typed.slice(0, hold.start) + hold.cands[i].text; renderTyped();
+  log.holds[log.holds.length - 1].chosen = hold.cands[i].text;
   renderCands();
 }
 function renderCands() {
   const box = $('cands'); box.innerHTML = '';
-  if (!hold) { box.innerHTML = '<span class="cand ph">話すと、ここに読みの候補が出ます</span>'; return; }
+  if (!hold) { box.innerHTML = '<span class="cand ph">長めに保った母音があると、ここに候補が出ます</span>'; return; }
   hold.cands.forEach((c, i) => {
     const b = document.createElement('button');
-    b.className = 'cand' + (i === hold.chosen ? ' on' : '') + (c.ai ? ' ai' : '');
+    b.className = 'cand' + (i === hold.chosen ? ' on' : '');
     b.textContent = c.text;
-    b.onclick = () => { hold.picked = true; applyChoice(i); };
+    b.onclick = () => applyChoice(i);
     box.appendChild(b);
   });
 }
-// 次の入力が始まったら、選ばれた候補から自分の話す速さを学ぶ
-function finalizeHold() {
-  if (!hold) return;
-  const ks = hold.cands[hold.chosen].ks;
-  if (ks) {
-    const per = hold.runs.map((r, i) => r.ms / ks[i]).filter(x => x > 80 && x < 900);
-    if (per.length) { const m = per.sort((a, b) => a - b)[Math.floor(per.length / 2)]; moraMs = moraMs * 0.8 + m * 0.2; store.set('moraMs', Math.round(moraMs)); showMora(); }
-  }
-  log.holds[log.holds.length - 1].chosen = hold.cands[hold.chosen].text;
-  hold = null; renderCands();
-}
-
-// 任意: AI（Gemini 無料枠）に日本語としての自然さで並べ替えてもらう
-let aiPausedUntil = 0, aiLast = 0, aiBusy = false;
-async function askAI(h) {
-  const key = $('gkey').value.trim();
-  if (!key || aiBusy || Date.now() < aiPausedUntil || Date.now() - aiLast < 4000) return;
-  aiBusy = true; aiLast = Date.now();
-  const desc = h.runs.map((r, i) => `${i + 1}. 「${KANA[r.v]}」${r.ms}ミリ秒${r.valleys ? `（途中で口が${r.valleys}回ゆるんだ）` : ''}`).join('\n');
-  const prompt = `日本語を声を出さずに口パクで話した人の、母音だけの観測です。子音は見えません。閉口を挟まずに話したので、同じ母音が続くところ（いい、ええ、おお、ああ、うう）がひとつの区間にまとまっています。この人の1モーラはおよそ${Math.round(moraMs)}ミリ秒です。
-区間（順番どおり）:
-${desc}
-直前までの入力: 「${typed.slice(0, h.start).slice(-20)}」
-各区間が何モーラ分か（1〜3）を推定し、日本語として発話されやすい母音列を確からしい順に最大5個答えてください。長さの手がかりを最優先し、迷うときは日本語の語としての自然さ（長音「おう」「えい」、「いい」「ええ」など）で判断してください。
-出力はJSONのみ: {"candidates":["母音のひらがな列", ...]}  使える文字は あいうえお だけ。区間の順番と母音は変えないこと。`;
-  try {
-    const model = $('gmodel').value.trim() || 'gemini-2.5-flash-lite';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } }),
-    });
-    if (res.status === 429) { aiPausedUntil = Date.now() + 60000; $('aiNote').textContent = 'AI: 無料枠の上限に当たったので1分休みます'; return; }
-    if (!res.ok) { $('aiNote').textContent = `AI: エラー ${res.status}`; return; }
-    const j = await res.json();
-    const text = (j.candidates?.[0]?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
-    const list = (JSON.parse(text.replace(/^```(json)?|```$/g, '').trim()).candidates || []).map(String);
-    if (hold !== h) return;   // もう次の入力が始まっている
-    const merged = [];
-    for (const t of list) { const ks = fitsRuns(t, h.runs); if (ks && !merged.some(c => c.text === t)) merged.push({ text: t, ks, ai: true }); }
-    if (!merged.length) return;
-    for (const c of h.cands) if (!merged.some(m => m.text === c.text)) merged.push(c);
-    const cur = h.cands[h.chosen].text;
-    h.cands = merged.slice(0, 6); h.ai = true;
-    log.holds[log.holds.length - 1].ai = list;
-    if (h.picked) h.chosen = Math.max(0, h.cands.findIndex(c => c.text === cur)); else h.chosen = 0;
-    applyChoice(h.chosen);
-    $('aiNote').textContent = 'AI: 並べ替えました（水色の点つきがAIの候補）';
-  } catch (e) { $('aiNote').textContent = 'AI: ' + e.message.slice(0, 60); }
-  finally { aiBusy = false; }
-}
+function finalizeHold() { if (hold) { hold = null; renderCands(); } }
 
 // ステージ2: 閉口を挟まない連続入力から、同じ母音の重なり（いい・ええ・おお…）を推定する
 // 入力: スペース押下中の各フレーム { t: ミリ秒, b: 判定ラベル(a,i,u,e,o,N), e: 口の動きの大きさ（閉口からの距離） }
