@@ -7,116 +7,116 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap">
 <style>
-  :root { --bg: #f8f8f8; --ink: #181818; --mute: #8a8a8a; --line: #e4e4e4; --white: #ffffff; --acc: #33b3dd; --warn: #e0703a; }
+  :root { --bg: #f8f8f8; --ink: #181818; --mute: #8a8a8a; --line: #e4e4e4; --white: #ffffff; --acc: #33b3dd; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { font-family: "Inter", "Noto Sans JP", sans-serif; background: var(--bg); color: var(--ink); letter-spacing: .02em; overflow: hidden; -webkit-font-smoothing: antialiased; }
   button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; padding: 0; }
 
-  /* 1画面に収める: ヘッダー / 本体 / フッター */
-  .app { height: 100vh; height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 22px clamp(20px, 4vw, 48px); }
+  /* 1画面・中央1列 */
+  .app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+  header { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 18px clamp(20px, 4vw, 48px); }
   .brand { display: flex; align-items: center; gap: 12px; }
   .mark { width: 36px; height: 36px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; font-weight: 700; font-size: 15px; }
   .brand-t { line-height: 1.2; }
-  .brand-t b { display: block; font-size: 18px; font-weight: 700; letter-spacing: .06em; }
-  .brand-t span { font-size: 11px; color: var(--ink); letter-spacing: .04em; }
+  .brand-t b { display: block; font-size: 18px; font-weight: 700; letter-spacing: .06em; font-family: "Noto Sans JP", sans-serif; }
+  .brand-t span { font-size: 11px; letter-spacing: .04em; }
   .menu { width: 40px; height: 40px; display: grid; place-items: center; }
   .menu span, .menu span::before, .menu span::after { display: block; width: 24px; height: 2px; background: var(--ink); position: relative; content: ""; }
   .menu span::before { position: absolute; top: -8px; } .menu span::after { position: absolute; top: 8px; }
 
-  main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); align-items: center; gap: clamp(16px, 4vw, 56px); padding-left: clamp(20px, 4vw, 48px); }
-  .label { font-size: 12px; font-weight: 600; letter-spacing: .14em; }
-  .label small { font-size: 11px; font-weight: 400; color: var(--mute); margin-left: 10px; letter-spacing: .04em; }
+  main { flex: 1; min-height: 0; width: min(760px, 100%); margin: 0 auto; padding: 0 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: clamp(10px, 2.2vh, 22px); }
+  .label { font-size: 11px; font-weight: 600; letter-spacing: .16em; white-space: nowrap; }
+  .label small { font-size: 11px; font-weight: 400; color: var(--mute); margin-left: 8px; letter-spacing: .04em; font-family: "Noto Sans JP", sans-serif; }
+  .target { min-height: 20px; font-size: 14px; text-align: center; font-family: "Noto Sans JP", sans-serif; }
+  .target b { color: var(--acc); font-size: 17px; }
 
-  /* 入力欄 */
-  .input-area { position: relative; min-width: 0; }
-  .typed-wrap { margin-top: 18px; min-height: 1.3em; font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: clamp(36px, 6.4vw, 80px); line-height: 1.3; letter-spacing: .06em; word-break: break-all;
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .caret { display: inline-block; width: .06em; height: .95em; background: var(--acc); vertical-align: -.08em; margin-left: .06em; animation: blink 1.1s steps(1) infinite; }
+  /* 自分の吹き出し（1つだけ） */
+  .bubble { position: relative; width: 100%; background: var(--white); border-radius: 40px; padding: clamp(18px, 3.4vh, 34px) 56px clamp(18px, 3.4vh, 34px) 40px; min-height: clamp(100px, 18vh, 170px); display: flex; flex-direction: column; justify-content: center; }
+  .bubble::after { content: ""; position: absolute; left: 50%; bottom: -11px; width: 24px; height: 24px; background: var(--white); transform: translateX(-50%) rotate(45deg); border-radius: 0 0 6px 0; }
+  .bubble .label { position: absolute; top: 18px; left: 40px; }
+  .text { font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: clamp(30px, min(6.4vw, 7vh), 56px); letter-spacing: .06em; line-height: 1.3; word-break: break-all; margin-top: 14px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .caret { display: inline-block; width: .06em; min-width: 3px; height: .95em; background: var(--acc); vertical-align: -.08em; margin-left: .06em; animation: blink 1.1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  .actions { display: flex; align-items: center; gap: 16px; margin-top: clamp(16px, 3vh, 32px); }
-  .circle { width: 56px; height: 56px; border-radius: 50%; background: var(--acc); color: #fff; display: grid; place-items: center; flex: none; transition: transform .15s; }
-  .circle:hover { transform: scale(1.06); }
-  .circle svg { width: 22px; height: 22px; }
-  .actions .t { font-size: 15px; font-weight: 700; font-family: "Noto Sans JP", sans-serif; }
-  .actions .s { font-size: 12px; color: var(--mute); }
-  .input-area:not(.has) .actions { visibility: hidden; }
-  .target { margin-top: 10px; font-size: 14px; min-height: 22px; font-family: "Noto Sans JP", sans-serif; }
-  .target b { color: var(--acc); font-size: 18px; }
+  .clear { position: absolute; right: 16px; top: 14px; width: 36px; height: 36px; border-radius: 50%; background: var(--acc); color: #fff; display: none; place-items: center; }
+  .clear svg { width: 16px; height: 16px; }
+  .bubble.has .clear { display: grid; }
 
-  /* 口元カメラ: 右端に寄せ、左側だけ大きく角丸にする */
-  .cam { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; }
-  .panel { position: relative; width: 100%; aspect-ratio: 2 / 1; max-height: 52vh; border-radius: 40px 0 0 40px; overflow: hidden; background: #2b2b2b; }
-  .panel canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
-  .panel .start { position: absolute; inset: 0; display: grid; place-items: center; }
-  .pill { background: var(--white); color: var(--ink); border-radius: 9999px; padding: 14px 26px; font-weight: 700; font-size: 15px; font-family: "Noto Sans JP", sans-serif; display: inline-flex; align-items: center; gap: 12px; }
-  .pill i { width: 28px; height: 28px; border-radius: 50%; background: var(--acc); display: grid; place-items: center; font-style: normal; color: #fff; }
+  /* 言葉の候補（ステージ3でクリック選択に使う） */
+  .cands { width: 100%; display: flex; align-items: center; gap: 14px; min-height: 42px; margin-top: 6px; }
+  .cands .list { flex: 1; min-width: 0; display: flex; gap: 8px; overflow: hidden; }
+  .cand { flex: none; border-radius: 9999px; padding: 10px 20px; background: var(--white); font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: 15px; }
+  .cand:hover { background: var(--ink); color: var(--bg); }
+  .cand.ph { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line); color: var(--mute); font-weight: 500; font-size: 13px; cursor: default; }
+
+  /* 口元（小さめ・まわりのリングが進み具合） */
+  .mouth-wrap { position: relative; flex: none; width: clamp(210px, min(28vw, 50vh), 260px); aspect-ratio: 2 / 1; margin-top: 6px; }
+  .mouth { position: absolute; inset: 0; border-radius: 9999px; overflow: hidden; background: #2b2b2b; }
+  .mouth canvas { width: 100%; height: 100%; display: block; }
+  .ring { position: absolute; inset: -7px; width: calc(100% + 14px); height: calc(100% + 14px); pointer-events: none; overflow: visible; }
+  .ring rect { fill: none; stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  .ring .bg { stroke: var(--line); }
+  .ring .fg { stroke: var(--ink); transition: stroke .15s; }
+  .ring.empty .fg { opacity: 0; }
+  .ring.armed .fg { stroke: var(--acc); }
+  .mouth-wrap.rec .ring .bg { stroke: var(--acc); }
+  .start { position: absolute; inset: 0; display: grid; place-items: center; }
+  .pill { background: var(--white); color: var(--ink); border-radius: 9999px; padding: 10px 12px 10px 20px; font-weight: 700; font-size: 14px; font-family: "Noto Sans JP", sans-serif; display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .pill i { width: 24px; height: 24px; border-radius: 50%; background: var(--acc); display: grid; place-items: center; font-style: normal; color: #fff; }
   .pill:disabled { opacity: .6; }
-  .track { width: 100%; height: 4px; background: var(--line); margin-top: 14px; }
-  .track > div { height: 100%; width: 0; background: var(--ink); transition: background .15s; }
-  .panel.armed + .track > div { background: var(--acc); }
-  .status { width: 100%; display: flex; align-items: baseline; gap: 18px; padding: 14px clamp(20px, 4vw, 48px) 0 0; }
-  .status .now { font-family: "Noto Sans JP", sans-serif; font-size: 40px; font-weight: 700; min-width: 1.2em; line-height: 1; }
-  .panel.armed ~ .status .now { color: var(--acc); }
-  .status .hint { font-size: 13px; font-family: "Noto Sans JP", sans-serif; }
 
-  .hold { align-self: flex-start; margin-top: 14px; display: inline-flex; align-items: center; gap: 12px; padding: 10px 22px 10px 10px; border-radius: 9999px; background: var(--white); font-family: "Noto Sans JP", sans-serif; font-size: 14px; font-weight: 700; user-select: none; -webkit-user-select: none; touch-action: none; transition: background .1s, color .1s; }
+  .state { text-align: center; }
+  .now { font-family: "Noto Sans JP", sans-serif; font-size: clamp(26px, 4.5vh, 38px); font-weight: 700; line-height: 1.1; min-height: 1.1em; }
+  .mouth-wrap.armed ~ .state .now { color: var(--acc); }
+  .hint { font-size: 13px; margin-top: 4px; font-family: "Noto Sans JP", sans-serif; }
+  .hold { display: inline-flex; align-items: center; gap: 12px; padding: 8px 20px 8px 8px; border-radius: 9999px; background: var(--white); font-family: "Noto Sans JP", sans-serif; font-size: 14px; font-weight: 700; user-select: none; -webkit-user-select: none; touch-action: none; transition: background .1s, color .1s; }
   .hold kbd { font-family: "Inter", sans-serif; font-size: 11px; letter-spacing: .12em; background: var(--bg); border-radius: 9999px; padding: 8px 14px; }
   .hold.on { background: var(--acc); color: #fff; }
   .hold.on kbd { background: rgba(255,255,255,.25); }
-  .panel.rec { box-shadow: inset 0 0 0 4px var(--acc); }
-  footer { display: flex; justify-content: space-between; align-items: center; padding: 14px clamp(20px, 4vw, 48px) 18px; font-size: 11px; color: var(--mute); letter-spacing: .1em; }
 
-  /* スマホ縦: 上に入力、下にカメラ */
-  @media (max-width: 760px), (max-aspect-ratio: 4/5) {
-    main { grid-template-columns: 1fr; grid-template-rows: auto auto; align-content: center; gap: 22px; }
-    .typed-wrap { font-size: clamp(32px, 10vw, 56px); -webkit-line-clamp: 2; }
-    .panel { max-height: 30vh; }
-    .actions { margin-top: 12px; }
-    .circle { width: 48px; height: 48px; }
-    .hold { margin-top: 10px; }
+  footer { flex: none; display: flex; justify-content: space-between; padding: 10px clamp(20px, 4vw, 48px) 16px; font-size: 11px; color: var(--mute); letter-spacing: .1em; }
+
+  @media (max-width: 600px) {
+    .bubble { padding-left: 26px; padding-right: 50px; border-radius: 32px; }
+    .bubble .label { left: 26px; }
+    .cands > .label { display: none; }
   }
-  @media (max-height: 560px) { .typed-wrap { font-size: clamp(28px, 8vh, 56px); } header { padding-top: 12px; padding-bottom: 8px; } }
 
-  /* オーバーレイ（登録・設定） */
-  .veil { position: fixed; inset: 0; z-index: 20; display: none; background: var(--bg); }
-  .veil.on { display: grid; grid-template-rows: auto 1fr; }
-  .veil-body { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); align-items: center; gap: clamp(16px, 4vw, 56px); padding-left: clamp(20px, 4vw, 48px); }
-  .big { font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: clamp(96px, 18vw, 200px); line-height: 1; margin: 14px 0 10px; }
+  /* 口形の登録 */
+  .veil { position: fixed; inset: 0; z-index: 20; display: none; background: var(--bg); align-items: center; justify-content: center; padding: 20px; }
+  .veil.on { display: flex; }
+  .card { width: min(620px, 100%); max-height: 100%; overflow: auto; text-align: center; }
+  .big { font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: clamp(72px, 16vh, 140px); line-height: 1; margin: 10px 0 8px; }
   .msg { font-family: "Noto Sans JP", sans-serif; font-size: 16px; font-weight: 500; }
   .sub { font-size: 13px; color: var(--mute); margin-top: 8px; font-family: "Noto Sans JP", sans-serif; line-height: 1.8; }
-  .bar { height: 4px; background: var(--line); margin-top: 26px; max-width: 420px; }
+  .bar { height: 4px; background: var(--line); margin: 18px auto; max-width: 360px; }
   .bar > div { height: 100%; width: 0; background: var(--acc); }
-  .done { padding: 0 clamp(20px, 4vw, 48px); max-width: 860px; margin: 0 auto; align-self: center; width: 100%; }
-  .done h2 { font-family: "Noto Sans JP", sans-serif; font-size: clamp(26px, 4vw, 40px); margin: 14px 0 6px; }
-  .scores { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 22px 0 10px; }
+  .card .mouth-wrap { margin: 16px auto 6px; }
+  .card h2 { font-family: "Noto Sans JP", sans-serif; font-size: clamp(24px, 4vw, 34px); margin: 10px 0 4px; }
+  .scores { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin: 20px 0 10px; }
   .score { background: var(--white); border-radius: 12px; padding: 14px 6px 12px; text-align: center; border: 2px solid transparent; }
   .score .k { display: block; font-family: "Noto Sans JP", sans-serif; font-size: 15px; font-weight: 700; }
-  .score b { display: block; font-size: clamp(22px, 3vw, 32px); font-weight: 700; margin-top: 4px; }
+  .score b { display: block; font-size: clamp(22px, 3vw, 30px); font-weight: 700; margin-top: 4px; }
   .score b small { font-size: 12px; font-weight: 500; color: var(--mute); margin-left: 2px; }
   .score.bad { border-color: var(--acc); cursor: pointer; }
   .score.bad b { color: var(--acc); }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 22px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 20px; }
   .pill.dark { background: var(--ink); color: var(--bg); }
-  .pill.line { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
-  @media (max-width: 760px), (max-aspect-ratio: 4/5) {
-    .veil-body { grid-template-columns: 1fr; align-content: center; gap: 18px; }
-    .veil-body .panel { max-height: 26vh; }
-    .big { font-size: clamp(72px, 24vw, 140px); }
-    .scores { grid-template-columns: repeat(3, 1fr); }
-  }
+  .pill.line { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); padding-right: 20px; }
+  @media (max-width: 600px) { .scores { grid-template-columns: repeat(3, 1fr); } }
 
+  /* 設定（右から出るメニュー） */
   .drawer { position: fixed; inset: 0 0 0 auto; width: min(420px, 100vw); background: var(--white); z-index: 30; transform: translateX(100%); transition: transform .25s ease; padding: 22px 32px; overflow: auto; visibility: hidden; }
   .drawer.on { transform: none; visibility: visible; box-shadow: -10px 0 40px rgba(0,0,0,.08); }
   .scrim { position: fixed; inset: 0; z-index: 25; background: rgba(24,24,24,.25); display: none; }
   .scrim.on { display: block; }
-  .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .x { width: 40px; height: 40px; font-size: 22px; }
-  .field { margin: 18px 0; }
+  .field { margin: 16px 0; }
   .field label { display: block; font-size: 13px; font-family: "Noto Sans JP", sans-serif; margin-bottom: 8px; }
-  .field input { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font: inherit; color: var(--ink); }
-  .links { margin-top: 26px; border-top: 1px solid var(--line); }
+  .field input[type=number] { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); font: inherit; color: var(--ink); }
+  .links { margin-top: 22px; border-top: 1px solid var(--line); }
   .links button { width: 100%; text-align: left; padding: 18px 0; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; font-family: "Noto Sans JP", sans-serif; font-weight: 700; font-size: 15px; }
   .links button span { font-family: "Inter", sans-serif; font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--mute); }
   .note { font-size: 12px; color: var(--mute); margin-top: 14px; font-family: "Noto Sans JP", sans-serif; line-height: 1.8; }
@@ -132,53 +132,56 @@
   </header>
 
   <main>
-    <section class="input-area" id="inputArea">
-      <div class="label">INPUT<small>入力</small></div>
-      <div class="target" id="target"></div>
-      <div class="typed-wrap"><span id="typed"></span><span class="caret"></span></div>
-      <div class="actions">
-        <button class="circle" id="clear" aria-label="全部けす"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        <div><div class="t">全部けす</div><div class="s">Backspace</div></div>
-      </div>
-    </section>
+    <div class="target" id="target"></div>
 
-    <section class="cam">
-      <div class="panel" id="panel">
-        <canvas id="mouthCanvas" width="640" height="320"></canvas>
-        <div class="start" id="startBox"><button class="pill" id="startCam">カメラをはじめる<i>→</i></button></div>
-      </div>
-      <div class="track"><div id="prog"></div></div>
-      <div class="status"><div class="now" id="now"></div><div class="hint" id="hint"></div></div>
-      <button class="hold" id="holdBtn"><kbd>SPACE</kbd>押している間だけ入力</button>
-    </section>
+    <div class="bubble" id="inputArea">
+      <div class="label">INPUT<small>入力</small></div>
+      <div class="text"><span id="typed"></span><span class="caret"></span></div>
+      <button class="clear" id="clear" aria-label="全部けす" title="全部けす（Backspace）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+
+    <div class="cands">
+      <div class="label">WORDS<small>言葉の候補</small></div>
+      <div class="list" id="cands"><span class="cand ph">ここに言葉の候補が出ます（ステージ3）</span></div>
+    </div>
+
+    <div class="mouth-wrap" id="panel">
+      <div class="mouth"><canvas id="mouthCanvas" width="480" height="240"></canvas></div>
+      <svg class="ring empty" id="ring" viewBox="0 0 274 144" preserveAspectRatio="none"><rect class="bg" x="2" y="2" width="270" height="140" rx="70"/><rect class="fg" id="ringFg" x="2" y="2" width="270" height="140" rx="70" pathLength="100" stroke-dasharray="0 100"/></svg>
+      <div class="start" id="startBox"><button class="pill" id="startCam">カメラをはじめる<i>→</i></button></div>
+    </div>
+
+    <div class="state">
+      <div class="now" id="now"></div>
+      <div class="hint" id="hint"></div>
+    </div>
+
+    <button class="hold" id="holdBtn"><kbd>SPACE</kbd>押している間だけ入力</button>
   </main>
 
-  <footer><span>STEP 1 — VOWEL INPUT</span><span>あ・い・う・え・お</span></footer>
+  <footer><span>STEP 1 — VOWEL INPUT</span><span>Backspace で全部けす</span></footer>
 </div>
 
 <div class="veil" id="calibVeil">
-  <header>
-    <div class="brand"><div class="mark">K</div><div class="brand-t"><b>口形の登録</b><span>Calibration</span></div></div>
-  </header>
-  <div class="veil-body" id="calibRun">
-    <div>
+  <div class="card">
+    <div id="calibRun">
       <div class="label">CALIBRATION<small id="calibStep"></small></div>
       <div class="big" id="calibChar">あ</div>
       <div class="msg" id="calibMsg"></div>
-      <div class="sub">声は出さず、使うときと同じ口パクで。</div>
       <div class="bar"><div id="calibBar"></div></div>
+      <div class="mouth-wrap"><div class="mouth"><canvas id="calibCanvas" width="480" height="240"></canvas></div></div>
+      <div class="sub">声は出さず、使うときと同じ口パクで。</div>
     </div>
-    <div class="cam"><div class="panel"><canvas id="calibCanvas" width="640" height="320"></canvas></div></div>
-  </div>
-  <div class="done" id="calibDone" style="display:none">
-    <div class="label">RESULT<small>登録結果</small></div>
-    <h2>登録できました</h2>
-    <div class="sub">登録した口形で判定したときの正答率です（周ごとの交差検証）。青い母音は押すと撮り直せます。</div>
-    <div class="scores" id="scores"></div>
-    <div class="sub" id="calibAdvice"></div>
-    <div class="row">
-      <button class="pill dark" id="calibOk">はじめる<i>→</i></button>
-      <button class="pill line" id="calibAgain">ぜんぶ撮り直す</button>
+    <div id="calibDone" style="display:none">
+      <div class="label">RESULT<small>登録結果</small></div>
+      <h2>登録できました</h2>
+      <div class="sub">登録した口形で判定したときの正答率です（周ごとの交差検証）。青い母音は押すと撮り直せます。</div>
+      <div class="scores" id="scores"></div>
+      <div class="sub" id="calibAdvice"></div>
+      <div class="row">
+        <button class="pill line" id="calibAgain">ぜんぶ撮り直す</button>
+        <button class="pill dark" id="calibOk">はじめる<i>→</i></button>
+      </div>
     </div>
   </div>
 </div>
@@ -374,7 +377,7 @@ async function capture(c, round, label) {
 }
 async function calibrate(onlyClass = null) {
   calibrating = true;
-  $('calibVeil').classList.add('on'); $('calibRun').style.display = 'grid'; $('calibDone').style.display = 'none';
+  $('calibVeil').classList.add('on'); $('calibRun').style.display = ''; $('calibDone').style.display = 'none';
   if (onlyClass) {
     samples = samples.filter(s => s.c !== onlyClass);
     for (let r = 0; r < 3; r++) await capture(onlyClass, r, `「${KANA[onlyClass]}」を撮り直し ${r + 1} / 3`);
@@ -410,6 +413,13 @@ $('calibOk').onclick = () => { $('calibVeil').classList.remove('on'); calibratin
 $('calibAgain').onclick = () => calibrate();
 
 // ---------- 入力の状態機械: キープで準備完了 → 閉じて確定 ----------
+function setRing(p, isArmed) {
+  const v = Math.max(0, Math.min(1, p));
+  $('ringFg').setAttribute('stroke-dasharray', `${v * 100} 100`);
+  $('ring').classList.toggle('empty', v === 0);
+  $('ring').classList.toggle('armed', isArmed);
+  $('panel').classList.toggle('armed', isArmed);
+}
 let ema = null, cand = null, since = 0, armed = null, closedSince = null;
 // 押下中（スペース / ボタン）の状態
 let rec = false, seg = null;
